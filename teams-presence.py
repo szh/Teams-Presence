@@ -26,6 +26,7 @@ def printblink(msg):
 	print('\033[5m' + str(msg) + '\033[0m')
 
 import os
+
 if not os.geteuid() == 0:
 	printerror("Please run this script with sudo.")
 	exit(2)
@@ -34,26 +35,26 @@ print("Welcome to Microsoft Teams presence for Pi!")
 print("Loading modules...")
 
 try:
-	import requests
-	import socket
-	import msal
+	import argparse
 	import atexit
+	import configparser
+	import json
 	import os
 	import os.path
-	import argparse
-	from random import randint
-	import configparser
-	from urllib.error import HTTPError
-	import json
-	import unicornhat as unicorn
-	import threading
+	import socket
 	import sys
+	import threading
 	import urllib.parse
-	from time import sleep
 	from datetime import datetime, time
-	from signal import signal, SIGINT
-	from gpiozero import CPUTemperature
+	from signal import SIGINT, signal
+	from time import sleep
+	from urllib.error import HTTPError
+	from colorzero import Color
+
+	import msal
 	import pyqrcode
+	import requests
+	from gpiozero import RGBLED, CPUTemperature
 except ModuleNotFoundError as ex:
 	printerror("The app could not be started.")
 	printerror("Please run 'sudo ./install.sh' first.")
@@ -95,8 +96,6 @@ SCOPES = [
 workday_start = time(8)
 workday_end = time(19)
 workdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-width = 0
-height = 0
 blinkThread = None
 after_work = False
 globalRed = 0
@@ -106,16 +105,22 @@ token=''
 points = []
 fullname = ''
 brightness_led = 0.5
-sleepValue = 30 # seconds
+sleepValue = 15 # seconds
+
+pinRed = 17
+pinGreen = 27
+pinBlue = 22
+
+led = RGBLED(pinRed, pinGreen, pinBlue, active_high = False)
+
 # #############
 
 # Check for arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--version", "-v", help="Prints the version", action="store_true")
 parser.add_argument("--refresh", "-r", help="Sets the refresh value in seconds", type=int)
-parser.add_argument("--brightness", "-b", help="Sets the brightness of the LED display. Value must be between 0.1 and 1", type=int)
+parser.add_argument("--brightness", "-b", help="Sets the brightness of the LED display. Value must be between 0.1 and 1", type=float)
 parser.add_argument("--afterwork", "-aw", help="Check for presence after working hours", action="store_true")
-parser.add_argument("--nopulse", "-np", help="Disables pulsing, if after work hours", action="store_true")
 parser.add_argument("--weekend", "-w", help="Also checks on weekends", action="store_true")
 
 args = parser.parse_args()
@@ -123,8 +128,6 @@ if args.version:
 	print(str(version))
 	exit(0)
 
-if args.nopulse:
-	printwarning("Option: No pulsing")
 
 if args.refresh:
 	if args.refresh < 10:
@@ -137,8 +140,8 @@ if args.brightness:
 	if args.brightness < 0.1 and args.brightness > 1:
 		printerror("Value must be between 0.1 and 1")
 		exit(5)
-	brightness = args.brightness
-	printwarning("Option: Brightness set to " + str(brightness))
+	brightness_led = args.brightness
+	printwarning("Option: Brightness set to " + str(brightness_led))
 
 if args.weekend:
 	printwarning("Option: Set weekend checks to true")
@@ -216,42 +219,16 @@ def checkUpdate():
 		printerror(e)
 
 # ############################
-#        UNICORN SETUP
+#        RGB LED SETUP
 # ############################
 def setColor(r, g, b, brightness, speed) :
 	global crntColors, globalBlue, globalGreen, globalRed
 	globalRed = r
 	globalGreen = g
 	globalBlue = b
-
-	if brightness == '' :
-		unicorn.brightness(brightness_led)
-
-	for y in range(height):
-		for x in range(width):
-			unicorn.set_pixel(x, y, r, g, b)
-			unicorn.show()
-
-def pulse():
-	for b in range(0, 7):
-		blockPrint()
-		unicorn.brightness(b/10)
-		enablePrint()
-		for y in range(height):
-			for x in range(width):
-				unicorn.set_pixel(x, y, 102, 255, 255)
-				unicorn.show()
-		sleep(0.05)
-	sleep(1)
-	for b in range(6, 0, -1):
-		blockPrint()
-		unicorn.brightness(b/10)
-		enablePrint()
-		for y in range(height):
-			for x in range(width):
-				unicorn.set_pixel(x, y, 102, 255, 255)
-				unicorn.show()
-		sleep(0.05)
+	
+	led.color = Color.from_rgb_bytes(
+		r * brightness_led, g * brightness_led, b * brightness_led)
 
 def switchBlue() :
 	red = 0
@@ -300,67 +277,7 @@ def switchOff() :
 	globalBlue = 0
 	if blinkThread != None :
 		blinkThread.do_run = False
-	unicorn.clear()
-	unicorn.off()
-
-class LightPoint:
-
-	def __init__(self):
-		self.direction = randint(1, 4)
-		if self.direction == 1:
-			self.x = randint(0, width - 1)
-			self.y = 0
-		elif self.direction == 2:
-			self.x = 0
-			self.y = randint(0, height - 1)
-		elif self.direction == 3:
-			self.x = randint(0, width - 1)
-			self.y = height - 1
-		else:
-			self.x = width - 1
-			self.y = randint(0, height - 1)
-
-		self.colour = []
-		for i in range(0, 3):
-			self.colour.append(randint(100, 255))
-
-
-def update_positions():
-
-	for point in points:
-		if point.direction == 1:
-			point.y += 1
-			if point.y > height - 1:
-				points.remove(point)
-		elif point.direction == 2:
-			point.x += 1
-			if point.x > width - 1:
-				points.remove(point)
-		elif point.direction == 3:
-			point.y -= 1
-			if point.y < 0:
-				points.remove(point)
-		else:
-			point.x -= 1
-			if point.x < 0:
-				points.remove(point)
-
-
-def plot_points():
-
-	unicorn.clear()
-	for point in points:
-		unicorn.set_pixel(point.x, point.y, point.colour[0], point.colour[1], point.colour[2])
-	unicorn.show()
-
-def blinkRandom(arg):
-	t = threading.currentThread()
-	while getattr(t, "do_run", True):
-		if len(points) < 10 and randint(0, 5) > 1:
-			points.append(LightPoint())
-		plot_points()
-		update_positions()
-		sleep(0.03)
+	led.off()
 
 ##################################################
 
@@ -405,8 +322,8 @@ def Authorize():
 				result = requests.get(f'{ENDPOINT}/me', headers={'Authorization': 'Bearer ' + result['access_token']}, timeout=5)
 				result.raise_for_status()
 				y = result.json()
-				fullname = y['givenName'] + " " + y['surname']
-				print("Token found, welcome " + y['givenName'] + "!")
+				fullname = y['displayName']
+				print("Token found, welcome " + y['displayName'] + "!")
 				return True
 			except requests.exceptions.HTTPError as err:
 				if err.response.status_code == 404:
@@ -435,14 +352,11 @@ def printHeader():
 	print()
 	cpu_r = round(cpu.temperature, 2)
 	print("Current CPU:\t\t" + str(cpu_r) + "°C")
+	print("Current Time:\t\t" + str(datetime.now()))
 
 
 # Check for Weekend
 def check_weekend():
-	# Stop random blinking
-	blinkThread.do_run = False
-	blinkThread.join()
-
 	now = datetime.now()
 
 	# Check for weekend option
@@ -454,11 +368,7 @@ def check_weekend():
 		now = datetime.now()
 		print("It's " + now.strftime("%A") + ", weekend! Grab more beer! \N{beer mug}")
 		print()
-		if args.nopulse:
-			switchOff()
-		else:
-			pulsethread = threading.Thread(target=pulse)
-			pulsethread.start()
+		switchOff()
 
 		countdown(30)
 
@@ -477,11 +387,7 @@ def check_workingtimes():
 		print("Work is over for today, grab a beer! \N{beer mug}")
 		print()
 
-		if args.nopulse:
-			switchOff()
-		else:
-			pulsethread = threading.Thread(target=pulse)
-			pulsethread.start()
+		switchOff()
 
 		countdown(30)
 
@@ -502,15 +408,6 @@ if __name__ == '__main__':
 
 	# Setup Unicorn light
 	setColor(50, 50, 50, 1, '')
-	unicorn.set_layout(unicorn.AUTO)
-	unicorn.brightness(0.5)
-
-	# Get the width and height of the hardware
-	width, height = unicorn.get_shape()
-
-	blinkThread = threading.Thread(target=blinkRandom, args=("task",))
-	blinkThread.do_run = True
-	blinkThread.start()
 
 	trycount = 0
 	while Authorize() == False:
@@ -524,9 +421,6 @@ if __name__ == '__main__':
 			continue
 
 	sleep(1)
-	# Stop random blinking
-	blinkThread.do_run = False
-	blinkThread.join()
 
 	trycount = 0
 
@@ -559,10 +453,6 @@ if __name__ == '__main__':
 				printerror("MS Graph URL is invalid!")
 				exit(5)
 			elif err.response.status_code == 401:
-				blinkThread = threading.Thread(target=blinkRandom, args=("task",))
-				blinkThread.do_run = True
-				blinkThread.start()
-
 				trycount = trycount + 1
 				printerror("MS Graph is not authorized. Please reauthorize the app (401). Trial count: " + str(trycount))
 				print()
@@ -585,11 +475,6 @@ if __name__ == '__main__':
 			countdown(5)
 			continue
 
-		# Stop random blinking
-		if blinkThread != None :
-			blinkThread.do_run = False
-			blinkThread.join()
-
 		# Get CPU temp
 		cpu = CPUTemperature()
 
@@ -605,13 +490,10 @@ if __name__ == '__main__':
 		print("Current CPU:\t\t" + str(cpu_r) + "°C")
 
 		if args.brightness:
-			printwarning("Option:\t\t\t" + "Set brightness to " + str(brightness))
+			printwarning("Option:\t\t\t" + "Set brightness to " + str(brightness_led))
 
 		if args.refresh:
 			printwarning("Option:\t\t\t" +  "Set refresh to " + str(sleepValue))
-
-		if args.nopulse:
-			printwarning("Option:\t\t\t" + "Pulsing disabled")
 
 		if args.afterwork:
 			printwarning("Option:\t\t\t" + "Set display after work to True")
