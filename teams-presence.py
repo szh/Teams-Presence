@@ -91,7 +91,7 @@ token = ''
 points = []
 fullname = ''
 brightness_led = 1.0
-sleepValue = 10  # seconds
+sleepValue = 5  # seconds
 
 pinRed = 17
 pinGreen = 27
@@ -125,8 +125,8 @@ if args.version:
 
 
 if args.refresh:
-    if args.refresh < 10:
-        printerror("Refresh value must be greater than 10")
+    if args.refresh < 5:
+        printerror("Refresh value must be at least 5")
         exit(4)
     sleepValue = args.refresh
     printwarning("Option: Sleep set to " + str(sleep))
