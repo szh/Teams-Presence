@@ -97,6 +97,10 @@ pinRed = 17
 pinGreen = 27
 pinBlue = 22
 
+currentRed = 0
+currentGreen = 0
+currentBlue = 0
+
 led = RGBLED(pinRed, pinGreen, pinBlue, active_high=False)
 
 # #############
@@ -227,10 +231,19 @@ def checkUpdate():
 
 
 def setColor(r, g, b):
+    global currentRed, currentGreen, currentBlue
+
+    if (r == currentRed & g == currentGreen & b == currentBlue):
+        return
+
     newColor = Color.from_rgb_bytes(
         r * brightness_led, g * brightness_led, b * brightness_led)
 
     led.color = newColor
+
+    currentRed = r
+    currentGreen = g
+    currentBlue = b
 
 
 def switchBlue():
